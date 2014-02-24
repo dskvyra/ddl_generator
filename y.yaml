@@ -1,0 +1,11 @@
+Article:
+   fields:
+       title: varchar(50)
+       text: text
+   ololo:
+       pio: cococo
+       er: lsls
+
+Category:
+   fields:
+       title: varchar(50)
