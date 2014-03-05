@@ -9,12 +9,15 @@ class DDLStatement(object):
 		return self.__build_statement()
 
 	def __build_statement(self):
-		entity = ['CREATE TABLE "{0}" (\n{0}_id serial'.format(self.table_name)]
+		entity = ['CREATE TABLE "{0}" (\n{0}_id serial,'.format(self.table_name)]
 		for key in self.fields:
-			field_string = '{table_name}_{field_name} {field_type}'
+			field_string = '{table_name}_{field_name} {field_type},'
 			entity.append(field_string.format(table_name = self.table_name, field_name = key, field_type = self.fields[key]))
-		entity.extend(['PRIMARY KEY "%s_id"' % self.table_name, ');\n'])
-		return ',\n'.join(entity)
+		entity.extend(['%s_created timestamp NOT NULL DEFAULT current_timestamp,' % self.table_name,
+						'%s_updated timestamp NOT NULL DEFAULT 0,' % self.table_name,
+						'PRIMARY KEY (%s_id)' % self.table_name,
+						');\n'])
+		return '\n'.join(entity)
 
 def generate_statement(from_yaml):
 	queries = []
