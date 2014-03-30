@@ -1,22 +1,22 @@
 import sys, yaml
 
 create_table_string = 'CREATE TABLE "{0}" (\n{0}_id serial,'
-field_string = '{table_name}_{field_name} {field_type},'
+field_string = '{}_{} {},'
 	
-update_function_string = """CREATE OR REPLACE FUNCTION {0}_on_update() RETURNS trigger AS ${0}_on_update$
+update_trigger_string = """CREATE OR REPLACE FUNCTION {0}_on_update() RETURNS trigger AS ${0}_on_update$
 	BEGIN
 		NEW.category_updated := current_timestamp;
 		RETURN NEW;
 	END;
 ${0}_on_update$ LANGUAGE plpgsql;
-"""
 
-update_trigger_string = """CREATE TRIGGER {0}_update_trigger BEFORE UPDATE ON {0}
+CREATE TRIGGER {0}_update_trigger BEFORE UPDATE ON {0}
 FOR EACH ROW
 EXECUTE PROCEDURE {0}_on_update();
 """
 
-one_to_many_string = """ALTER TABLE "{0}" ADD CONSTRAINT fk_{0}_{1} FOREIGN KEY ({1}_id) REFERENCES "{1}" ({1}_id);
+one_to_many_string = """ALTER TABLE "{0}" ADD COLUMN {1}_id integer NOT NULL;
+ALTER TABLE "{0}" ADD CONSTRAINT fk_{0}_{1} FOREIGN KEY ({1}_id) REFERENCES "{1}" ({1}_id);
 """
 
 many_to_many_string = """CREATE TABLE {0}_{1}(
@@ -32,55 +32,72 @@ PRIMARY KEY ({0}_id)
 );
 """
 
-def create_table(entities, entity):
-	ddl = [create_table_string.format(entity)]
-	for key in entities[entity]['fields']:
-		ddl.append(field_string.format(table_name = entity, field_name = key, field_type = entities[entity]['fields'][key]))
-	ddl.append(timestamp_fields_string.format(entity))
-	return '\n'.join(ddl)
+class Generator(object):
+	def __init__(self):
+		self.entities = {}
+		self.queries = []
+		self._statment = ''
 
-def alter_table(entities, entity):
-	relation_string = []
-	relations = entities[entity]['relations']
-	if relations != {}:
+	def build_ddl(self, schema_file):
+		with open (schema_file, "r") as yaml_file:
+			schema = yaml.safe_load(yaml_file)
+			for (table_name, elements) in schema.items():
+				table_name = table_name.lower()
+				self.entities[table_name] = {'fields':elements.get('fields', {}), 'relations':elements.get('relations', {})}
+			self._statment = self._create_table()
+
+	def dump(self, file_name):
+		with open(file_name, "w") as text_file:
+			text_file.write(self._statment)
+
+	@property
+	def statement(self):
+		return self._statment
+
+	def __repr__(self):
+		return self.statement
+
+	def clear(self):
+		self.entities = {}
+		self.queries = []
+		self._statment = ''
+
+	def _create_table(self):
+		queries = []
+
+		for entity_name in self.entities:
+			ddl = [create_table_string.format(entity_name)]
+			for key in self.entities[entity_name]['fields']:
+				ddl.append(field_string.format(entity_name, key, self.entities[entity_name]['fields'][key]))
+			ddl.append(timestamp_fields_string.format(entity_name))
+			ddl.append(self._build_triggers(entity_name))
+			relations = self._build_relations(entity_name)
+			if relations:
+				ddl.append(relations)
+			queries.append('\n'.join(ddl))
+		return '\n'.join(queries)
+
+	def _build_relations(self, entity_name):
+		relations = self.entities[entity_name]['relations']
+		relation_list = []
+
 		for relation in relations:
-			if relation.lower != entity:
-				relation_type = relations[relation]
-				neighbor = entities.get(relation.lower(), None)
-				if neighbor != None:
-					neighbor_relations = neighbor['relations']
-					if neighbor_relations.get(entity.title(), '') == 'many':
-						if relation_type == 'one':
-							relation_string.append(one_to_many_string.format(entity, relation.lower()))
-						elif relation_type == 'many':
-							# import ipdb; ipdb.set_trace();
-							neighbor_relations[entity.title()] = 'many_done'
-							relation_string.append(many_to_many_string.format(entity, relation.lower()))
-	return '\n'.join(relation_string)
+			relation_type = relations[relation]
+			neighbor = self.entities.get(relation.lower(), None)
+			if relation.lower() != entity_name and neighbor['relations'].get(entity_name.title(), '') == 'many':
+				if relation_type == 'one':
+					relation_list.append(one_to_many_string.format(entity_name, relation.lower()))
+				elif relation_type == 'many':
+					neighbor['relations'][entity_name.title()] = 'many_done'
+					relation_list.append(many_to_many_string.format(entity_name, relation.lower()))
+		return '\n'.join(relation_list)
 
-def add_triggers(entity):
-	return '\n'.join((update_function_string.format(entity), update_trigger_string.format(entity)))
+	def _build_triggers(self, entity_name):
+		return update_trigger_string.format(entity_name)
 
 if __name__ == '__main__':
-	yaml_file = sys.argv[1]
-	entities = {}
-	with open (yaml_file, "r") as yaml_file:
-		schema = yaml.safe_load(yaml_file)
-		for (table_name, elements) in schema.items():
-			table_name = table_name.lower()
-			entities[table_name] = {'fields':elements.get('fields', {}), 'relations':elements.get('relations', {})}
-	queries = []
-	
-	for entity in entities:
-		queries.append(create_table(entities, entity))
-
-	for entity in entities:
-		alter_query = alter_table(entities, entity)
-		if alter_query != '':
-			queries.append(alter_query)
-	
-	for entity in entities:
-		queries.append(add_triggers(entity))
-		
-	for query in queries:
-		print query
+	g = Generator()
+	g.build_ddl('y.yaml')
+	g.dump('statement.sql')
+	print g
+	g.clear()
